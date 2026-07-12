@@ -30,13 +30,14 @@ cache:
     ttl-seconds: 60
 hold:
   seconds: 600
-# Placeholders for later phases (3-4):
+idempotency:
+  ttl-seconds: 86400
+reconciler:
+  period-ms: 15000
+  batch-size: 100
+# Placeholder for phase 4:
 # ratelimit:
 #   limit: 20
-# idempotency:
-#   ttl-seconds: 86400
-# reconciler:
-#   period-ms: 15000
 
 management:
   endpoints:

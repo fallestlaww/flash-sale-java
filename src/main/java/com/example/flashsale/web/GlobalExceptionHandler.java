@@ -2,6 +2,7 @@ package com.example.flashsale.web;
 
 import com.example.flashsale.error.EventNotFoundException;
 import com.example.flashsale.error.HoldExpiredException;
+import com.example.flashsale.error.IdempotencyConflictException;
 import com.example.flashsale.error.OrderConflictException;
 import com.example.flashsale.error.OrderNotFoundException;
 import com.example.flashsale.error.SoldOutException;
@@ -30,7 +31,7 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.NOT_FOUND, e.getMessage(), request);
     }
 
-    @ExceptionHandler({SoldOutException.class, OrderConflictException.class})
+    @ExceptionHandler({SoldOutException.class, OrderConflictException.class, IdempotencyConflictException.class})
     public ResponseEntity<ApiError> handleConflict(RuntimeException e, HttpServletRequest request) {
         return build(HttpStatus.CONFLICT, e.getMessage(), request);
     }

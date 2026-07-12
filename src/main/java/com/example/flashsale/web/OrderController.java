@@ -28,8 +28,9 @@ public class OrderController {
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public OrderResponse create(@RequestHeader("X-User-Id") Long userId,
+                                @RequestHeader("Idempotency-Key") String idempotencyKey,
                                 @Valid @RequestBody CreateOrderRequest request) {
-        return orderService.create(userId, request);
+        return orderService.create(userId, idempotencyKey, request);
     }
 
     @PostMapping("/{id}/pay")
