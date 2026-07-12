@@ -1,0 +1,49 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: sale-service
+  datasource:
+    # Postgres is the source of truth.
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/flashsale}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres}
+  jpa:
+    hibernate:
+      # Hibernate creates/updates the tables from the @Entity classes at startup.
+      ddl-auto: update
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+
+# --- Self-Redis (ephemeral/hot state, port :8840) ---
+selfredis:
+  base-url: ${SELFREDIS_BASE_URL:http://localhost:8840}
+  connect-timeout: 2s
+  read-timeout: 2s
+
+# --- Product config ---
+cache:
+  event:
+    ttl-seconds: 60
+# The following are placeholders for later phases (2-4):
+# hold:
+#   seconds: 600
+# ratelimit:
+#   limit: 20
+# idempotency:
+#   ttl-seconds: 86400
+# reconciler:
+#   period-ms: 15000
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+
+logging:
+  level:
+    com.example.flashsale: DEBUG
