@@ -1,12 +1,14 @@
 package com.example.flashsale.service;
 
 import com.example.flashsale.config.HoldProperties;
+import com.example.flashsale.config.IdempotencyProperties;
 import com.example.flashsale.domain.Order;
 import com.example.flashsale.domain.OrderStatus;
 import com.example.flashsale.domain.Payment;
 import com.example.flashsale.domain.PaymentStatus;
 import com.example.flashsale.error.EventNotFoundException;
 import com.example.flashsale.error.HoldExpiredException;
+import com.example.flashsale.error.IdempotencyConflictException;
 import com.example.flashsale.error.OrderConflictException;
 import com.example.flashsale.error.OrderNotFoundException;
 import com.example.flashsale.error.SoldOutException;
@@ -19,12 +21,14 @@ import com.example.flashsale.web.dto.CreateOrderRequest;
 import com.example.flashsale.web.dto.OrderResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 
 @Service
@@ -35,27 +39,44 @@ public class OrderService {
     private static final String HELD = "HELD";
     private static final String PAID = "PAID";
     private static final String CANCELLED = "CANCELLED";
+    private static final String IDEM_PENDING = "PENDING";
 
     private final OrderRepository orders;
     private final PaymentRepository payments;
     private final EventRepository events;
     private final SelfRedisClient selfRedis;
     private final HoldProperties holdProps;
+    private final IdempotencyProperties idempotencyProps;
 
     public OrderService(OrderRepository orders,
                         PaymentRepository payments,
                         EventRepository events,
                         SelfRedisClient selfRedis,
-                        HoldProperties holdProps) {
+                        HoldProperties holdProps,
+                        IdempotencyProperties idempotencyProps) {
         this.orders = orders;
         this.payments = payments;
         this.events = events;
         this.selfRedis = selfRedis;
         this.holdProps = holdProps;
+        this.idempotencyProps = idempotencyProps;
     }
 
     @Transactional
-    public OrderResponse create(Long userId, CreateOrderRequest request) {
+    public OrderResponse create(Long userId, String idempotencyKey, CreateOrderRequest request) {
+        String idemKey = Keys.idem(idempotencyKey);
+        if (!selfRedis.setIfAbsent(idemKey, IDEM_PENDING, idempotencyProps.ttlSeconds())) {
+            return replayIdempotent(idemKey, idempotencyKey);
+        }
+        try {
+            return reserve(userId, request, idemKey);
+        } catch (RuntimeException e) {
+            releaseIdempotencyKey(idemKey);
+            throw e;
+        }
+    }
+
+    private OrderResponse reserve(Long userId, CreateOrderRequest request, String idemKey) {
         if (!events.existsById(request.eventId())) {
             throw new EventNotFoundException(request.eventId());
         }
@@ -74,6 +95,8 @@ public class OrderService {
             Order order = orders.save(
                     new Order(userId, request.eventId(), request.qty(), OrderStatus.HELD, holdExpiresAt, now));
 
+            selfRedis.set(idemKey, Long.toString(order.getId()), idempotencyProps.ttlSeconds());
+
             boolean held = selfRedis.setIfAbsent(Keys.hold(order.getId()), HELD, holdProps.seconds());
             if (!held) {
                 log.warn("hold key unexpectedly existed for fresh order {}", order.getId());
@@ -86,6 +109,17 @@ public class OrderService {
             compensateReservation(stockKey, request.qty());
             throw e;
         }
+    }
+
+    private OrderResponse replayIdempotent(String idemKey, String idempotencyKey) {
+        Optional<String> stored = selfRedis.get(idemKey);
+        if (stored.isEmpty() || IDEM_PENDING.equals(stored.get())) {
+            throw new IdempotencyConflictException(idempotencyKey);
+        }
+        Long orderId = Long.parseLong(stored.get());
+        Order order = orders.findById(orderId).orElseThrow(() -> new OrderNotFoundException(orderId));
+        log.info("idempotent replay of key {} -> order {}", idempotencyKey, orderId);
+        return toResponse(order);
     }
 
     @Transactional
@@ -154,6 +188,23 @@ public class OrderService {
     public OrderResponse get(Long orderId) {
         Order order = orders.findById(orderId).orElseThrow(() -> new OrderNotFoundException(orderId));
         return toResponse(order);
+    }
+
+    public List<Order> findExpiredHeld(int limit) {
+        return orders.findExpiredHeld(OrderStatus.HELD, Instant.now(), PageRequest.of(0, limit));
+    }
+
+    @Transactional
+    public boolean expireIfHeld(Long orderId) {
+        return orders.markExpiredIfHeld(orderId, OrderStatus.EXPIRED, OrderStatus.HELD) == 1;
+    }
+
+    private void releaseIdempotencyKey(String idemKey) {
+        try {
+            selfRedis.delete(idemKey);
+        } catch (RuntimeException e) {
+            log.error("failed to release idempotency key {}", idemKey, e);
+        }
     }
 
     private void compensateReservation(String stockKey, int qty) {
