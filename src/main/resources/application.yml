@@ -5,13 +5,11 @@ spring:
   application:
     name: sale-service
   datasource:
-    # Postgres is the source of truth.
     url: ${DB_URL:jdbc:postgresql://localhost:5432/flashsale}
     username: ${DB_USERNAME:postgres}
     password: ${DB_PASSWORD:postgres}
   jpa:
     hibernate:
-      # Hibernate creates/updates the tables from the @Entity classes at startup.
       ddl-auto: update
     open-in-view: false
     properties:
@@ -24,7 +22,6 @@ selfredis:
   connect-timeout: 2s
   read-timeout: 2s
 
-# --- Product config ---
 cache:
   event:
     ttl-seconds: 60
@@ -35,9 +32,10 @@ idempotency:
 reconciler:
   period-ms: 15000
   batch-size: 100
-# Placeholder for phase 4:
-# ratelimit:
-#   limit: 20
+ratelimit:
+  # Fixed-window checkout limit per user: `limit` requests per `window-seconds`.
+  limit: 20
+  window-seconds: 60
 
 management:
   endpoints:
