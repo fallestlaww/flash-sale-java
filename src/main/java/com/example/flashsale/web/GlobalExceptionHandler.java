@@ -1,6 +1,10 @@
 package com.example.flashsale.web;
 
 import com.example.flashsale.error.EventNotFoundException;
+import com.example.flashsale.error.HoldExpiredException;
+import com.example.flashsale.error.OrderConflictException;
+import com.example.flashsale.error.OrderNotFoundException;
+import com.example.flashsale.error.SoldOutException;
 import com.example.flashsale.selfredis.SelfRedisException;
 import com.example.flashsale.selfredis.SelfRedisUnavailableException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -10,6 +14,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
@@ -20,9 +25,19 @@ public class GlobalExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
-    @ExceptionHandler(EventNotFoundException.class)
-    public ResponseEntity<ApiError> handleNotFound(EventNotFoundException e, HttpServletRequest request) {
+    @ExceptionHandler({EventNotFoundException.class, OrderNotFoundException.class})
+    public ResponseEntity<ApiError> handleNotFound(RuntimeException e, HttpServletRequest request) {
         return build(HttpStatus.NOT_FOUND, e.getMessage(), request);
+    }
+
+    @ExceptionHandler({SoldOutException.class, OrderConflictException.class})
+    public ResponseEntity<ApiError> handleConflict(RuntimeException e, HttpServletRequest request) {
+        return build(HttpStatus.CONFLICT, e.getMessage(), request);
+    }
+
+    @ExceptionHandler(HoldExpiredException.class)
+    public ResponseEntity<ApiError> handleGone(HoldExpiredException e, HttpServletRequest request) {
+        return build(HttpStatus.GONE, e.getMessage(), request);
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
@@ -32,6 +47,11 @@ public class GlobalExceptionHandler {
                 ? fieldError.getField() + " " + fieldError.getDefaultMessage()
                 : "validation failed";
         return build(HttpStatus.BAD_REQUEST, message, request);
+    }
+
+    @ExceptionHandler(MissingRequestHeaderException.class)
+    public ResponseEntity<ApiError> handleMissingHeader(MissingRequestHeaderException e, HttpServletRequest request) {
+        return build(HttpStatus.BAD_REQUEST, e.getMessage(), request);
     }
 
     @ExceptionHandler(SelfRedisUnavailableException.class)

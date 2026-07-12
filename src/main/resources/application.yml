@@ -28,9 +28,9 @@ selfredis:
 cache:
   event:
     ttl-seconds: 60
-# The following are placeholders for later phases (2-4):
-# hold:
-#   seconds: 600
+hold:
+  seconds: 600
+# Placeholders for later phases (3-4):
 # ratelimit:
 #   limit: 20
 # idempotency:
