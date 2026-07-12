@@ -45,6 +45,7 @@ public class OrderService {
     private final PaymentRepository payments;
     private final EventRepository events;
     private final SelfRedisClient selfRedis;
+    private final RateLimiter rateLimiter;
     private final HoldProperties holdProps;
     private final IdempotencyProperties idempotencyProps;
 
@@ -52,18 +53,24 @@ public class OrderService {
                         PaymentRepository payments,
                         EventRepository events,
                         SelfRedisClient selfRedis,
+                        RateLimiter rateLimiter,
                         HoldProperties holdProps,
                         IdempotencyProperties idempotencyProps) {
         this.orders = orders;
         this.payments = payments;
         this.events = events;
         this.selfRedis = selfRedis;
+        this.rateLimiter = rateLimiter;
         this.holdProps = holdProps;
         this.idempotencyProps = idempotencyProps;
     }
 
     @Transactional
     public OrderResponse create(Long userId, String idempotencyKey, CreateOrderRequest request) {
+        // Rate-limit gate runs first — before idempotency and the stock decrement — so spam is
+        // rejected with 429 without touching the counter or creating an order.
+        rateLimiter.checkAndConsume(userId);
+
         String idemKey = Keys.idem(idempotencyKey);
         if (!selfRedis.setIfAbsent(idemKey, IDEM_PENDING, idempotencyProps.ttlSeconds())) {
             return replayIdempotent(idemKey, idempotencyKey);

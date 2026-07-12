@@ -5,6 +5,7 @@ import com.example.flashsale.error.HoldExpiredException;
 import com.example.flashsale.error.IdempotencyConflictException;
 import com.example.flashsale.error.OrderConflictException;
 import com.example.flashsale.error.OrderNotFoundException;
+import com.example.flashsale.error.RateLimitExceededException;
 import com.example.flashsale.error.SoldOutException;
 import com.example.flashsale.selfredis.SelfRedisException;
 import com.example.flashsale.selfredis.SelfRedisUnavailableException;
@@ -39,6 +40,11 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(HoldExpiredException.class)
     public ResponseEntity<ApiError> handleGone(HoldExpiredException e, HttpServletRequest request) {
         return build(HttpStatus.GONE, e.getMessage(), request);
+    }
+
+    @ExceptionHandler(RateLimitExceededException.class)
+    public ResponseEntity<ApiError> handleTooManyRequests(RateLimitExceededException e, HttpServletRequest request) {
+        return build(HttpStatus.TOO_MANY_REQUESTS, e.getMessage(), request);
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

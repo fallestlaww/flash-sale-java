@@ -21,7 +21,7 @@ public final class Keys {
         return "idem:" + idempotencyKey;
     }
 
-    public static String rateLimit(Object userId, long epochMinute) {
-        return "rl:" + userId + ":" + epochMinute;
+    public static String rateLimit(Object userId, long window) {
+        return "rl:" + userId + ":" + window;
     }
 }
