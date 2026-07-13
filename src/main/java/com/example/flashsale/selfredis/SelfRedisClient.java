@@ -3,7 +3,10 @@ package com.example.flashsale.selfredis;
 import com.example.flashsale.selfredis.dto.CasResponse;
 import com.example.flashsale.selfredis.dto.CounterResponse;
 import com.example.flashsale.selfredis.dto.SetResultResponse;
+import com.example.flashsale.selfredis.dto.SizeResponse;
+import com.example.flashsale.selfredis.dto.SnapshotResponse;
 import com.example.flashsale.selfredis.dto.StatsResponse;
+import com.example.flashsale.selfredis.dto.TtlResponse;
 import com.example.flashsale.selfredis.dto.ValueResponse;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
@@ -139,6 +142,107 @@ public class SelfRedisClient {
                     .body(StatsResponse.class), "stats");
         } catch (ResourceAccessException e) {
             throw new SelfRedisUnavailableException("stats", e);
+        }
+    }
+
+    public Optional<ValueResponse> getEntry(String key) {
+        try {
+            ValueResponse r = rest.get()
+                    .uri("/api/v1/keys/{key}", key)
+                    .retrieve()
+                    .body(ValueResponse.class);
+            return Optional.ofNullable(r);
+        } catch (HttpClientErrorException.NotFound e) {
+            return Optional.empty();
+        } catch (ResourceAccessException e) {
+            throw new SelfRedisUnavailableException("getEntry " + key, e);
+        }
+    }
+
+    public boolean replaceIfPresent(String key, String value, Long ttlSeconds) {
+        try {
+            SetResultResponse r = rest.put()
+                    .uri(uri -> uri.path("/api/v1/keys/{key}").queryParam("xx", true).build(key))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(setBody(value, ttlSeconds))
+                    .retrieve()
+                    .body(SetResultResponse.class);
+            return required(r, "replaceIfPresent " + key).stored();
+        } catch (ResourceAccessException e) {
+            throw new SelfRedisUnavailableException("replaceIfPresent " + key, e);
+        }
+    }
+
+    public Optional<Long> getTtl(String key) {
+        try {
+            TtlResponse r = rest.get()
+                    .uri("/api/v1/keys/{key}/ttl", key)
+                    .retrieve()
+                    .body(TtlResponse.class);
+            return Optional.ofNullable(r).map(TtlResponse::ttlSeconds);
+        } catch (HttpClientErrorException.NotFound e) {
+            return Optional.empty();
+        } catch (ResourceAccessException e) {
+            throw new SelfRedisUnavailableException("getTtl " + key, e);
+        }
+    }
+
+    public boolean persist(String key) {
+        try {
+            rest.delete()
+                    .uri("/api/v1/keys/{key}/ttl", key)
+                    .retrieve()
+                    .toBodilessEntity();
+            return true;
+        } catch (HttpClientErrorException.NotFound e) {
+            return false;
+        } catch (ResourceAccessException e) {
+            throw new SelfRedisUnavailableException("persist " + key, e);
+        }
+    }
+
+    public int size() {
+        try {
+            SizeResponse r = rest.get()
+                    .uri("/api/v1/size")
+                    .retrieve()
+                    .body(SizeResponse.class);
+            return required(r, "size").size();
+        } catch (ResourceAccessException e) {
+            throw new SelfRedisUnavailableException("size", e);
+        }
+    }
+
+    public void flush() {
+        try {
+            rest.delete()
+                    .uri("/api/v1/keys")
+                    .retrieve()
+                    .toBodilessEntity();
+        } catch (ResourceAccessException e) {
+            throw new SelfRedisUnavailableException("flush", e);
+        }
+    }
+
+    public SnapshotResponse snapshotSave() {
+        try {
+            return required(rest.post()
+                    .uri("/api/v1/snapshot")
+                    .retrieve()
+                    .body(SnapshotResponse.class), "snapshotSave");
+        } catch (ResourceAccessException e) {
+            throw new SelfRedisUnavailableException("snapshotSave", e);
+        }
+    }
+
+    public SnapshotResponse snapshotLoad() {
+        try {
+            return required(rest.post()
+                    .uri("/api/v1/snapshot/load")
+                    .retrieve()
+                    .body(SnapshotResponse.class), "snapshotLoad");
+        } catch (ResourceAccessException e) {
+            throw new SelfRedisUnavailableException("snapshotLoad", e);
         }
     }
 
