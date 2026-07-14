@@ -1,6 +1,6 @@
 package com.example.flashsale.service;
 
-import com.example.flashsale.config.CacheProperties;
+import com.example.flashsale.config.EventCacheProperties;
 import com.example.flashsale.domain.Event;
 import com.example.flashsale.error.EventNotFoundException;
 import com.example.flashsale.repository.EventRepository;
@@ -26,12 +26,12 @@ public class EventService {
     private final EventRepository events;
     private final SelfRedisClient selfRedis;
     private final ObjectMapper objectMapper;
-    private final CacheProperties cacheProps;
+    private final EventCacheProperties cacheProps;
 
     public EventService(EventRepository events,
                         SelfRedisClient selfRedis,
                         ObjectMapper objectMapper,
-                        CacheProperties cacheProps) {
+                        EventCacheProperties cacheProps) {
         this.events = events;
         this.selfRedis = selfRedis;
         this.objectMapper = objectMapper;

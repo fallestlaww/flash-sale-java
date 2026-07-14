@@ -17,6 +17,10 @@ public final class Keys {
         return "hold:" + orderId;
     }
 
+    public static String cacheOrder(Object orderId) {
+        return "cache:order:" + orderId;
+    }
+
     public static String idem(String idempotencyKey) {
         return "idem:" + idempotencyKey;
     }

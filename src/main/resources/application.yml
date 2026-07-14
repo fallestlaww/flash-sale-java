@@ -6,8 +6,8 @@ spring:
     name: sale-service
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/flashsale}
-    username: ${DB_USERNAME:postgres}
-    password: ${DB_PASSWORD:postgres}
+    username: postgres
+    password:
   jpa:
     hibernate:
       ddl-auto: update
@@ -25,6 +25,8 @@ selfredis:
 cache:
   event:
     ttl-seconds: 60
+  order:
+    ttl-seconds: 30
 hold:
   seconds: 600
 idempotency:
