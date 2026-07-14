@@ -2,6 +2,7 @@ package com.example.flashsale.service;
 
 import com.example.flashsale.config.HoldProperties;
 import com.example.flashsale.config.IdempotencyProperties;
+import com.example.flashsale.config.OrderCacheProperties;
 import com.example.flashsale.domain.Order;
 import com.example.flashsale.domain.OrderStatus;
 import com.example.flashsale.domain.Payment;
@@ -16,9 +17,12 @@ import com.example.flashsale.repository.EventRepository;
 import com.example.flashsale.repository.OrderRepository;
 import com.example.flashsale.repository.PaymentRepository;
 import com.example.flashsale.selfredis.SelfRedisClient;
+import com.example.flashsale.selfredis.SelfRedisUnavailableException;
 import com.example.flashsale.support.Keys;
 import com.example.flashsale.web.dto.CreateOrderRequest;
 import com.example.flashsale.web.dto.OrderResponse;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.PageRequest;
@@ -48,6 +52,8 @@ public class OrderService {
     private final RateLimiter rateLimiter;
     private final HoldProperties holdProps;
     private final IdempotencyProperties idempotencyProps;
+    private final ObjectMapper objectMapper;
+    private final OrderCacheProperties cacheProps;
 
     public OrderService(OrderRepository orders,
                         PaymentRepository payments,
@@ -55,7 +61,9 @@ public class OrderService {
                         SelfRedisClient selfRedis,
                         RateLimiter rateLimiter,
                         HoldProperties holdProps,
-                        IdempotencyProperties idempotencyProps) {
+                        IdempotencyProperties idempotencyProps,
+                        ObjectMapper objectMapper,
+                        OrderCacheProperties cacheProps) {
         this.orders = orders;
         this.payments = payments;
         this.events = events;
@@ -63,6 +71,8 @@ public class OrderService {
         this.rateLimiter = rateLimiter;
         this.holdProps = holdProps;
         this.idempotencyProps = idempotencyProps;
+        this.objectMapper = objectMapper;
+        this.cacheProps = cacheProps;
     }
 
     @Transactional
@@ -148,6 +158,7 @@ public class OrderService {
             order.setStatus(OrderStatus.PAID);
             orders.save(order);
             payments.save(new Payment(orderId, BigDecimal.valueOf(order.getQty()), PaymentStatus.PAID));
+            invalidateOrderCache(orderId);
             log.info("PAID order {}", orderId);
             return toResponse(order);
         }
@@ -186,6 +197,7 @@ public class OrderService {
         orders.save(order);
         selfRedis.increment(Keys.stock(order.getEventId()), order.getQty());
         selfRedis.delete(holdKey);
+        invalidateOrderCache(orderId);
         log.info("CANCELLED order {} (returned {} to stock of event {})",
                 orderId, order.getQty(), order.getEventId());
         return toResponse(order);
@@ -193,8 +205,19 @@ public class OrderService {
 
     @Transactional(readOnly = true)
     public OrderResponse get(Long orderId) {
+        String cacheKey = Keys.cacheOrder(orderId);
+
+        Optional<OrderResponse> cached = readCache(cacheKey);
+        if (cached.isPresent()) {
+            log.debug("order cache HIT {}", cacheKey);
+            return refreshExpiry(cached.get());
+        }
+        log.debug("order cache MISS {}", cacheKey);
+
         Order order = orders.findById(orderId).orElseThrow(() -> new OrderNotFoundException(orderId));
-        return toResponse(order);
+        OrderResponse response = toResponse(order);
+        writeCache(cacheKey, response);
+        return response;
     }
 
     public List<Order> findExpiredHeld(int limit) {
@@ -203,7 +226,11 @@ public class OrderService {
 
     @Transactional
     public boolean expireIfHeld(Long orderId) {
-        return orders.markExpiredIfHeld(orderId, OrderStatus.EXPIRED, OrderStatus.HELD) == 1;
+        boolean flipped = orders.markExpiredIfHeld(orderId, OrderStatus.EXPIRED, OrderStatus.HELD) == 1;
+        if (flipped) {
+            invalidateOrderCache(orderId);
+        }
+        return flipped;
     }
 
     private void releaseIdempotencyKey(String idemKey) {
@@ -212,6 +239,58 @@ public class OrderService {
         } catch (RuntimeException e) {
             log.error("failed to release idempotency key {}", idemKey, e);
         }
+    }
+
+    private Optional<OrderResponse> readCache(String cacheKey) {
+        Optional<String> raw;
+        try {
+            raw = selfRedis.get(cacheKey);
+        } catch (SelfRedisUnavailableException e) {
+            log.warn("order cache read failed for {} ({}); falling back to Postgres", cacheKey, e.getMessage());
+            return Optional.empty();
+        }
+        if (raw.isEmpty()) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(objectMapper.readValue(raw.get(), OrderResponse.class));
+        } catch (JsonProcessingException e) {
+            log.warn("corrupt order cache entry {}; ignoring and reloading", cacheKey);
+            return Optional.empty();
+        }
+    }
+
+    private void writeCache(String cacheKey, OrderResponse response) {
+        try {
+            selfRedis.set(cacheKey, objectMapper.writeValueAsString(response), cacheProps.ttlSeconds());
+        } catch (JsonProcessingException e) {
+            log.warn("could not serialize order {} for cache", response.orderId());
+        } catch (SelfRedisUnavailableException e) {
+            log.warn("order cache populate failed for {} ({})", cacheKey, e.getMessage());
+        }
+    }
+
+    private void invalidateOrderCache(Long orderId) {
+        try {
+            selfRedis.delete(Keys.cacheOrder(orderId));
+        } catch (RuntimeException e) {
+            log.warn("order cache invalidation failed for order {}; will self-heal on TTL", orderId, e);
+        }
+    }
+
+    private OrderResponse refreshExpiry(OrderResponse cached) {
+        if (cached.status() != OrderStatus.HELD || cached.createdAt() == null) {
+            return cached;
+        }
+        Instant holdExpiresAt = cached.createdAt().plusSeconds(holdProps.seconds());
+        long secondsLeft = Math.max(0, Duration.between(Instant.now(), holdExpiresAt).getSeconds());
+        return new OrderResponse(
+                cached.orderId(),
+                cached.eventId(),
+                cached.qty(),
+                cached.status(),
+                secondsLeft,
+                cached.createdAt());
     }
 
     private void compensateReservation(String stockKey, int qty) {
